@@ -1,0 +1,54 @@
+name: Daily AI Notes (4x/day)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'    # 00:00 UTC
+    - cron: '0 6 * * *'    # 06:00 UTC
+    - cron: '0 12 * * *'   # 12:00 UTC
+    - cron: '0 18 * * *'   # 18:00 UTC
+  workflow_dispatch:       # Allows manual testing
+
+permissions:
+  contents: write
+
+jobs:
+  generate-note:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies with uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Generate AI note with your API
+        id: generate
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_API_ENDPOINT: ${{ secrets.AI_API_ENDPOINT }}
+        run: |
+          NOTE=$(uv run python .github/scripts/generate_daily_note.py)
+          echo "note<<EOF" >> $GITHUB_ENV
+          echo "$NOTE" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Append note to README and commit
+        run: |
+          echo "" >> README.md
+          echo "## 📅 $(date -u +'%Y-%m-%d %H:%M UTC')" >> README.md
+          echo "" >> README.md
+          echo "${{ env.note }}" >> README.md
+          echo "" >> README.md
+          echo "---" >> README.md
+
+          git config --global user.name "jmxt3"
+          git config --global user.email "jmxt3@users.noreply.github.com"
+          git add README.md
+          git commit -m "Daily AI note - $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push

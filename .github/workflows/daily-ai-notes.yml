@@ -1,11 +1,9 @@
-name: Daily AI Notes (4x/day)
+name: Daily AI Notes (Randomized)
 
 on:
   schedule:
-    - cron: '0 0 * * *'    # 00:00 UTC
-    - cron: '0 6 * * *'    # 06:00 UTC
-    - cron: '0 12 * * *'   # 12:00 UTC
-    - cron: '0 18 * * *'   # 18:00 UTC
+    # Run exactly 6 times a day (every 4 hours at the 17th minute) to save Actions minutes
+    - cron: '17 */4 * * *'
   workflow_dispatch:       # Allows manual testing
 
 permissions:
@@ -20,16 +18,52 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Decide whether to run
+        id: decision
+        run: |
+          # If manually triggered via GitHub UI, always run
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "run_job=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check the timestamp of the latest commit to avoid missing a day
+          LATEST_COMMIT_TS=$(git log -1 --format=%ct)
+          CURRENT_TS=$(date +%s)
+          DIFF_HOURS=$(( (CURRENT_TS - LATEST_COMMIT_TS) / 3600 ))
+          
+          if [ $DIFF_HOURS -ge 22 ]; then
+            echo "No commits in $DIFF_HOURS hours. Forcing execution to guarantee a daily commit!"
+            echo "run_job=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Roll a random number between 0 and 99
+          CHANCE=$((RANDOM % 100))
+          
+          # 65% chance to execute. Out of 6 runs maximum, this gives ~4 commits
+          # on average per day, but will still wildly fluctuate between isolated 1s and full 6s.
+          if [ $CHANCE -lt 65 ]; then
+            echo "Random roll: $CHANCE (<65). Running the workflow!"
+            echo "run_job=true" >> $GITHUB_OUTPUT
+          else
+            echo "Random roll: $CHANCE (>=65). Skipping this time."
+            echo "run_job=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Install dependencies with uv
+        if: steps.decision.outputs.run_job == 'true'
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - name: Sync dependencies
+        if: steps.decision.outputs.run_job == 'true'
         run: uv sync --frozen
 
       - name: Generate AI note with your API
         id: generate
+        if: steps.decision.outputs.run_job == 'true'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_API_ENDPOINT: ${{ secrets.AI_API_ENDPOINT }}
@@ -40,6 +74,7 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       - name: Append note to README and commit
+        if: steps.decision.outputs.run_job == 'true'
         run: |
           echo "" >> README.md
           echo "## 📅 $(date -u +'%Y-%m-%d %H:%M UTC')" >> README.md

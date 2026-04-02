@@ -2,8 +2,9 @@ import os
 import logging
 import uvicorn
 from datetime import datetime, timezone
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -20,6 +21,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL = os.environ.get("MODEL")
 
 app = FastAPI()
+security = HTTPBearer()
+
+def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    api_key = os.environ.get("API_KEY")
+    if not api_key or credentials.credentials != api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
 
 ASCII_ART = r"""
     ___  ____   ___       _ __        __                       __ 
@@ -46,7 +58,7 @@ def health_check():
 
 
 @app.post("/generate-note")
-async def generate_note():
+async def generate_note(api_key: str = Depends(verify_api_key)):
     if not GEMINI_API_KEY:
         return {"error": "GEMINI_API_KEY environment variable not set"}
 

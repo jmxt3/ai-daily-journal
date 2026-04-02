@@ -43,7 +43,7 @@ jobs:
           echo "" >> README.md
           echo "## 📅 $(date -u +'%Y-%m-%d %H:%M UTC')" >> README.md
           echo "" >> README.md
-          echo "${{ env.note }}" >> README.md
+          echo "$note" >> README.md
           echo "" >> README.md
           echo "---" >> README.md
 

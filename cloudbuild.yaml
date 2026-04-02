@@ -1,15 +1,19 @@
 steps:
-  # 1. Build and push the container image
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+  # 1. Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
     args:
-      - 'builds'
-      - 'submit'
-      - '--region=us-central1'
-      - '--tag'
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/pixelwood-462401/ai-daily-journal-repo/ai-daily-journal:latest'
+      - '.'
+
+  # 2. Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
       - 'us-central1-docker.pkg.dev/pixelwood-462401/ai-daily-journal-repo/ai-daily-journal:latest'
 
-  # 2. Deploy to Cloud Run
+  # 3. Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -20,8 +24,10 @@ steps:
       - 'us-central1-docker.pkg.dev/pixelwood-462401/ai-daily-journal-repo/ai-daily-journal:latest'
       - '--region'
       - 'us-central1'
+      - '--project'
+      - 'pixelwood-462401'
       - '--allow-unauthenticated'
-      - '--timeout'
-      - '300s'
       - '--set-env-vars'
-      - 'GEMINI_API_KEY=AIzaSyAI2vLbYuzSBiM6AY0fPL-rdS913i9f3jU,MODEL=gemini-2.0-flash-lite'
+      - 'MODEL=gemini-2.0-flash-lite'
+      - '--set-secrets'
+      - 'GEMINI_API_KEY=GEMINI_API_KEY:latest,API_KEY=API_KEY:latest'

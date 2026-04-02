@@ -15,12 +15,6 @@ Embrace the emergent properties of open-weight models! Today, let's critically e
 
 ---
 
-## 📅 2026-04-02 16:45 UTC
-
-{'error': "403 PERMISSION_DENIED. {'error': {'code': 403, 'message': 'Your API key was reported as leaked. Please use another API key.', 'status': 'PERMISSION_DENIED'}}"}
-
----
-
 ## 📅 2026-04-02 16:53 UTC
 
 2026-04-02 16:53 UTC

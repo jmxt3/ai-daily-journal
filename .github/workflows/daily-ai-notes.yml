@@ -70,7 +70,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           token_format: 'id_token'
-          id_token_audience: ${{ secrets.AI_API_ENDPOINT }}
+          id_token_audience: ${{ secrets.AI_SERVICE_URL }}
           id_token_include_email: true
 
       - name: Generate AI note with your API

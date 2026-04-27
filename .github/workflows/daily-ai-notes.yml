@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # Required for GCP Workload Identity Federation
 
 jobs:
   generate-note:
@@ -61,12 +62,21 @@ jobs:
         if: steps.decision.outputs.run_job == 'true'
         run: uv sync --frozen
 
+      - name: Authenticate to Google Cloud
+        id: auth
+        if: steps.decision.outputs.run_job == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
       - name: Generate AI note with your API
         id: generate
         if: steps.decision.outputs.run_job == 'true'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_API_ENDPOINT: ${{ secrets.AI_API_ENDPOINT }}
+          CLOUDSDK_AUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.auth_token }}
         run: |
           NOTE=$(uv run python .github/scripts/generate_daily_note.py)
           echo "note<<EOF" >> $GITHUB_ENV

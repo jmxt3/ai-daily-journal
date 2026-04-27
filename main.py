@@ -8,24 +8,46 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.cloud import secretmanager
 
-# Constants
+# Load non-sensitive config from .env (GOOGLE_CLOUD_PROJECT, MODEL, etc.)
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment variables
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL = os.environ.get("MODEL")
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "github-ai-daily-journal")
+
+
+def get_secret(secret_id: str) -> str:
+    """Return secret value from env var (Cloud Run injection) or
+    fall back to Secret Manager using Application Default Credentials
+    (local dev: run `gcloud auth application-default login` once)."""
+    value = os.environ.get(secret_id)
+    if value:
+        return value
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        logger.info(f"Loaded '{secret_id}' from Secret Manager")
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        logger.error(f"Failed to load '{secret_id}' from Secret Manager: {e}")
+        return None
+
+
+# Secrets — injected by Cloud Run in prod, fetched from Secret Manager locally
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+API_KEY = get_secret("API_KEY")
+MODEL = os.environ.get("MODEL", "gemini-2.0-flash-lite")
 
 app = FastAPI()
 security = HTTPBearer()
 
 def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    api_key = os.environ.get("API_KEY")
-    if not api_key or credentials.credentials != api_key:
+    if not API_KEY or credentials.credentials != API_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API Key",
@@ -60,7 +82,8 @@ def health_check():
 @app.post("/generate-note")
 async def generate_note(api_key: str = Depends(verify_api_key)):
     if not GEMINI_API_KEY:
-        return {"error": "GEMINI_API_KEY environment variable not set"}
+        logger.error("GEMINI_API_KEY is not configured")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service unavailable")
 
     try:
         client = genai.Client(
@@ -89,7 +112,7 @@ Today is {today}. Keep it under 60 words. Be technical, PhD level, Make it insig
             contents=contents,
             config=generate_content_config,
         ):
-            note_content += chunk.text
+            note_content += chunk.text or ""
 
         return {
             "note": note_content,
@@ -97,7 +120,7 @@ Today is {today}. Keep it under 60 words. Be technical, PhD level, Make it insig
         }
     except Exception as e:
         logger.error(f"Error generating note: {e}")
-        return {"error": str(e)}
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"[DEBUG] {str(e)}")
 
 
 if __name__ == "__main__":

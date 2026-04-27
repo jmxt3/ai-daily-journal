@@ -43,17 +43,18 @@ GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 API_KEY = get_secret("API_KEY")
 MODEL = os.environ.get("MODEL", "gemini-2.0-flash-lite")
 
-app = FastAPI()
-security = HTTPBearer()
+from fastapi.security import APIKeyHeader
 
-def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if not API_KEY or credentials.credentials != API_KEY:
+app = FastAPI()
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+def verify_api_key(api_key: str = Depends(api_key_header)):
+    if not API_KEY or api_key != API_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API Key",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Invalid or missing API Key"
         )
-    return credentials.credentials
+    return api_key
 
 ASCII_ART = r"""
     ___  ____   ___       _ __        __                       __ 

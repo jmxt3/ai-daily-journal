@@ -69,6 +69,9 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: 'id_token'
+          id_token_audience: ${{ secrets.AI_API_ENDPOINT }}
+          id_token_include_email: true
 
       - name: Generate AI note with your API
         id: generate
@@ -76,7 +79,7 @@ jobs:
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_API_ENDPOINT: ${{ secrets.AI_API_ENDPOINT }}
-          CLOUDSDK_AUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.auth_token }}
+          CLOUDSDK_AUTH_ID_TOKEN: ${{ steps.auth.outputs.id_token }}
         run: |
           NOTE=$(uv run python .github/scripts/generate_daily_note.py)
           echo "note<<EOF" >> $GITHUB_ENV

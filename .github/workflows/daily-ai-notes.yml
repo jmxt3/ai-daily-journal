@@ -2,55 +2,52 @@ name: Daily AI Notes (Randomized)
 
 on:
   schedule:
-    # Run exactly 6 times a day (every 4 hours at the 17th minute) to save Actions minutes
-    - cron: '17 */4 * * *'
-  workflow_dispatch:       # Allows manual testing
+    # Twice an hour. The run only publishes when a slot from today's plan is
+    # due and not already committed. Most runs exit before installing anything.
+    # Slots stop at 22:00 UTC; 22:07, 22:37, 22:50, and 23:07 are makeup chances
+    # so a skipped run still finishes the UTC day before midnight.
+    - cron: '7,37 * * * *'
+    - cron: '50 22 * * *'
+  workflow_dispatch: # Posts one note now if today's plan is not full yet.
 
 permissions:
   contents: write
-  id-token: write   # Required for GCP Workload Identity Federation
+  id-token: write # Required for GCP Workload Identity Federation
+
+concurrency:
+  group: daily-ai-notes
+  cancel-in-progress: false
 
 jobs:
   generate-note:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Notes per UTC day. schedule.py clamps these to 1..10 inclusive.
+      # Optional: set the SCHEDULE_SEED secret to pick a different sequence.
+      MIN_POSTS_PER_DAY: "1"
+      MAX_POSTS_PER_DAY: "10"
+      MIN_GAP_MINUTES: "45"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          # The day's commit subjects are the record of what was already posted.
+          fetch-depth: 0
 
-      - name: Decide whether to run
+      - name: Decide whether to post
         id: decision
+        env:
+          SCHEDULE_SEED: ${{ secrets.SCHEDULE_SEED }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          # If manually triggered via GitHub UI, always run
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "run_job=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Check the timestamp of the latest commit to avoid missing a day
-          LATEST_COMMIT_TS=$(git log -1 --format=%ct)
-          CURRENT_TS=$(date +%s)
-          DIFF_HOURS=$(( (CURRENT_TS - LATEST_COMMIT_TS) / 3600 ))
-          
-          if [ $DIFF_HOURS -ge 22 ]; then
-            echo "No commits in $DIFF_HOURS hours. Forcing execution to guarantee a daily commit!"
-            echo "run_job=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Roll a random number between 0 and 99
-          CHANCE=$((RANDOM % 100))
-          
-          # 65% chance to execute. Out of 6 runs maximum, this gives ~4 commits
-          # on average per day, but will still wildly fluctuate between isolated 1s and full 6s.
-          if [ $CHANCE -lt 65 ]; then
-            echo "Random roll: $CHANCE (<65). Running the workflow!"
-            echo "run_job=true" >> $GITHUB_OUTPUT
-          else
-            echo "Random roll: $CHANCE (>=65). Skipping this time."
-            echo "run_job=false" >> $GITHUB_OUTPUT
-          fi
+          # A run queued behind another one is created with the old SHA.
+          # Count commits from the branch tip at job start so we don't retry
+          # notes the previous run already pushed.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git checkout -B "${GITHUB_REF_NAME}" "origin/${GITHUB_REF_NAME}"
+          python3 .github/scripts/schedule.py decide >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies with uv
         if: steps.decision.outputs.run_job == 'true'
@@ -73,31 +70,54 @@ jobs:
           id_token_audience: ${{ secrets.AI_SERVICE_URL }}
           id_token_include_email: true
 
-      - name: Generate AI note with your API
-        id: generate
+      - name: Append note to README and commit
         if: steps.decision.outputs.run_job == 'true'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_API_ENDPOINT: ${{ secrets.AI_API_ENDPOINT }}
           CLOUDSDK_AUTH_ID_TOKEN: ${{ steps.auth.outputs.id_token }}
+          POST_COUNT: ${{ steps.decision.outputs.post_count }}
+          PLAN_DAY: ${{ steps.decision.outputs.day }}
         run: |
-          NOTE=$(uv run python .github/scripts/generate_daily_note.py)
-          echo "note<<EOF" >> $GITHUB_ENV
-          echo "$NOTE" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Append note to README and commit
-        if: steps.decision.outputs.run_job == 'true'
-        run: |
-          echo "" >> README.md
-          echo "## 📅 $(date -u +'%Y-%m-%d %H:%M UTC')" >> README.md
-          echo "" >> README.md
-          echo "$note" >> README.md
-          echo "" >> README.md
-          echo "---" >> README.md
+          set -euo pipefail
+          if ! [[ "$POST_COUNT" =~ ^[0-9]+$ ]] || (( POST_COUNT < 1 || POST_COUNT > 10 )); then
+            echo "refusing unexpected post_count=$POST_COUNT" >&2
+            exit 1
+          fi
 
           git config --global user.name "jmxt3"
           git config --global user.email "jmxt3@users.noreply.github.com"
-          git add README.md
-          git commit -m "Daily AI note - $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git push
+
+          posted_this_run=0
+          for ((i = 1; i <= POST_COUNT; i++)); do
+            if [[ "$(date -u +%Y-%m-%d)" != "$PLAN_DAY" ]]; then
+              echo "UTC day rolled over before posting; not writing notes onto the next day." >&2
+              if (( posted_this_run == 0 )); then
+                exit 1
+              fi
+              exit 0
+            fi
+
+            NOTE=$(uv run python .github/scripts/generate_daily_note.py)
+            STAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+            if [[ "${STAMP%% *}" != "$PLAN_DAY" ]]; then
+              echo "UTC day rolled over before the commit; discarding this note." >&2
+              if (( posted_this_run == 0 )); then
+                exit 1
+              fi
+              exit 0
+            fi
+            {
+              printf '\n'
+              printf '## 📅 %s\n' "$STAMP"
+              printf '\n'
+              printf '%s\n' "$NOTE"
+              printf '\n'
+              printf -- '---\n'
+            } >> README.md
+
+            git add README.md
+            git commit -m "Daily AI note - ${STAMP}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+            posted_this_run=$((posted_this_run + 1))
+          done
